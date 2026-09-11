@@ -1,20 +1,12 @@
-from __future__ import division, print_function
-
 import sys
 from contextlib import contextmanager
 from functools import wraps
-from time import sleep, time
+# relative/cpu timer for reliable timings under sudden load
+from time import process_time, sleep, time
 
-# Use relative/cpu timer to have reliable timings when there is a sudden load
-try:
-    from time import process_time
-except ImportError:
-    from time import clock
-    process_time = clock
+from pytest import importorskip, mark, skip
 
 from tqdm import tqdm, trange
-
-from .tests_tqdm import _range, importorskip, mark, patch_lock, skip
 
 pytestmark = mark.slow
 
@@ -60,14 +52,13 @@ def relative_timer():
     yield lambda: elapser()
     spent = elapser()
 
-    def elapser():  # NOQA
+    def elapser():  # pylint: disable=function-redefined
         return spent
 
 
 def retry_on_except(n=3, check_cpu_time=True):
-    """decroator for retrying `n` times before raising Exceptions"""
+    """decorator for retrying `n` times before raising Exceptions"""
     def wrapper(func):
-        """actual decorator"""
         @wraps(func)
         def test_inner(*args, **kwargs):
             """may skip if `check_cpu_time` fails"""
@@ -98,10 +89,7 @@ def simple_progress(iterable=None, total=None, file=sys.stdout, desc='',
     def format_interval(t):
         mins, s = divmod(int(t), 60)
         h, m = divmod(mins, 60)
-        if h:
-            return '{0:d}:{1:02d}:{2:02d}'.format(h, m, s)
-        else:
-            return '{0:02d}:{1:02d}'.format(m, s)
+        return f'{h:d}:{m:02d}:{s:02d}' if h else f'{m:02d}:{s:02d}'
 
     def update_and_print(i=1):
         n[0] += i
@@ -143,25 +131,19 @@ def simple_progress(iterable=None, total=None, file=sys.stdout, desc='',
     update_and_print(0)
     if iterable is not None:
         return update_and_yield()
-    else:
-        return update_and_print
+    return update_and_print
 
 
 def assert_performance(thresh, name_left, time_left, name_right, time_right):
     """raises if time_left > thresh * time_right"""
     if time_left > thresh * time_right:
         raise ValueError(
-            ('{name[0]}: {time[0]:f}, '
-             '{name[1]}: {time[1]:f}, '
-             'ratio {ratio:f} > {thresh:f}').format(
-                name=(name_left, name_right),
-                time=(time_left, time_right),
-                ratio=time_left / time_right, thresh=thresh))
+            f'{name_left}: {time_left:f}, {name_right}: {time_right:f}'
+            f', ratio {time_left / time_right:f} > {thresh:f}')
 
 
 @retry_on_except()
 def test_iter_basic_overhead():
-    """Test overhead of iteration based tqdm"""
     total = int(1e6)
 
     a = 0
@@ -173,7 +155,7 @@ def test_iter_basic_overhead():
 
     a = 0
     with relative_timer() as time_bench:
-        for i in _range(total):
+        for i in range(total):
             a += i
             sys.stdout.write(str(a))
 
@@ -182,19 +164,18 @@ def test_iter_basic_overhead():
 
 @retry_on_except()
 def test_manual_basic_overhead():
-    """Test overhead of manual tqdm"""
     total = int(1e6)
 
     with tqdm(total=total * 10, leave=True) as t:
         a = 0
         with relative_timer() as time_tqdm:
-            for i in _range(total):
+            for i in range(total):
                 a += i
                 t.update(10)
 
     a = 0
     with relative_timer() as time_bench:
-        for i in _range(total):
+        for i in range(total):
             a += i
             sys.stdout.write(str(a))
 
@@ -211,8 +192,7 @@ def worker(total, blocking=True):
 
 
 @retry_on_except()
-@patch_lock(thread=True)
-def test_lock_args():
+def test_lock_args(thread_lock):
     """Test overhead of nonblocking threads"""
     ThreadPoolExecutor = importorskip('concurrent.futures').ThreadPoolExecutor
 
@@ -236,7 +216,6 @@ def test_lock_args():
 
 @retry_on_except(10)
 def test_iter_overhead_hard():
-    """Test overhead of iteration based tqdm (hard)"""
     total = int(1e5)
 
     a = 0
@@ -249,7 +228,7 @@ def test_iter_overhead_hard():
 
     a = 0
     with relative_timer() as time_bench:
-        for i in _range(total):
+        for i in range(total):
             a += i
             sys.stdout.write(("%i" % a) * 40)
 
@@ -258,20 +237,19 @@ def test_iter_overhead_hard():
 
 @retry_on_except(10)
 def test_manual_overhead_hard():
-    """Test overhead of manual tqdm (hard)"""
     total = int(1e5)
 
     with tqdm(total=total * 10, leave=True, miniters=1,
               mininterval=0, maxinterval=0) as t:
         a = 0
         with relative_timer() as time_tqdm:
-            for i in _range(total):
+            for i in range(total):
                 a += i
                 t.update(10)
 
     a = 0
     with relative_timer() as time_bench:
-        for i in _range(total):
+        for i in range(total):
             a += i
             sys.stdout.write(("%i" % a) * 40)
 
@@ -280,7 +258,6 @@ def test_manual_overhead_hard():
 
 @retry_on_except(10)
 def test_iter_overhead_simplebar_hard():
-    """Test overhead of iteration based tqdm vs simple progress bar (hard)"""
     total = int(1e4)
 
     a = 0
@@ -292,7 +269,7 @@ def test_iter_overhead_simplebar_hard():
     assert a == (total ** 2 - total) / 2.0
 
     a = 0
-    s = simple_progress(_range(total), leave=True,
+    s = simple_progress(range(total), leave=True,
                         miniters=1, mininterval=0)
     with relative_timer() as time_bench:
         for i in s:
@@ -303,14 +280,13 @@ def test_iter_overhead_simplebar_hard():
 
 @retry_on_except(10)
 def test_manual_overhead_simplebar_hard():
-    """Test overhead of manual tqdm vs simple progress bar (hard)"""
     total = int(1e4)
 
     with tqdm(total=total * 10, leave=True, miniters=1,
               mininterval=0, maxinterval=0) as t:
         a = 0
         with relative_timer() as time_tqdm:
-            for i in _range(total):
+            for i in range(total):
                 a += i
                 t.update(10)
 
@@ -318,7 +294,7 @@ def test_manual_overhead_simplebar_hard():
                                        miniters=1, mininterval=0)
     a = 0
     with relative_timer() as time_bench:
-        for i in _range(total):
+        for i in range(total):
             a += i
             simplebar_update(10)
 

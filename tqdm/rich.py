@@ -6,8 +6,6 @@ Usage:
 >>> for i in trange(10):
 ...     ...
 """
-from __future__ import absolute_import
-
 from warnings import warn
 
 from rich.progress import (
@@ -15,7 +13,6 @@ from rich.progress import (
 
 from .std import TqdmExperimentalWarning
 from .std import tqdm as std_tqdm
-from .utils import _range
 
 __author__ = {"github.com/": ["casperdcl"]}
 __all__ = ['tqdm_rich', 'trrange', 'tqdm', 'trange']
@@ -31,18 +28,21 @@ class FractionColumn(ProgressColumn):
     def render(self, task):
         """Calculate common unit for completed and total."""
         completed = int(task.completed)
-        total = int(task.total)
+        # total is None when the iterable has no length (e.g. a generator)
+        total = int(task.total) if task.total is not None else None
+        base = total if total is not None else completed
         if self.unit_scale:
             unit, suffix = filesize.pick_unit_and_suffix(
-                total,
+                base,
                 ["", "K", "M", "G", "T", "P", "E", "Z", "Y"],
                 self.unit_divisor,
             )
         else:
-            unit, suffix = filesize.pick_unit_and_suffix(total, [""], 1)
+            unit, suffix = filesize.pick_unit_and_suffix(base, [""], 1)
         precision = 0 if unit == 1 else 1
+        total_str = f"{total/unit:,.{precision}f}" if total is not None else "?"
         return Text(
-            f"{completed/unit:,.{precision}f}/{total/unit:,.{precision}f} {suffix}",
+            f"{completed/unit:,.{precision}f}/{total_str} {suffix}",
             style="progress.download")
 
 
@@ -84,13 +84,16 @@ class tqdm_rich(std_tqdm):  # pragma: no cover
         ----------
         progress  : tuple, optional
             arguments for `rich.progress.Progress()`.
+        options  : dict, optional
+            keyword arguments for `rich.progress.Progress()`.
         """
         kwargs = kwargs.copy()
         kwargs['gui'] = True
         # convert disable = None to False
         kwargs['disable'] = bool(kwargs.get('disable', False))
         progress = kwargs.pop('progress', None)
-        super(tqdm_rich, self).__init__(*args, **kwargs)
+        options = kwargs.pop('options', {}).copy()
+        super().__init__(*args, **kwargs)
 
         if self.disable:
             return
@@ -108,21 +111,23 @@ class tqdm_rich(std_tqdm):  # pragma: no cover
                 ",", RateColumn(unit=d['unit'], unit_scale=d['unit_scale'],
                                 unit_divisor=d['unit_divisor']), "]"
             )
-        self._prog = Progress(*progress, transient=not self.leave)
+        options.setdefault('transient', not self.leave)
+        self._prog = Progress(*progress, **options)
         self._prog.__enter__()
         self._task_id = self._prog.add_task(self.desc or "", **d)
 
     def close(self):
         if self.disable:
             return
-        super(tqdm_rich, self).close()
+        self.display()  # print 100%, vis #1306
+        super().close()
         self._prog.__exit__(None, None, None)
 
     def clear(self, *_, **__):
         pass
 
     def display(self, *_, **__):
-        if not hasattr(self, '_prog'):
+        if not hasattr(self, '_task_id'):
             return
         self._prog.update(self._task_id, completed=self.n, description=self.desc)
 
@@ -136,15 +141,12 @@ class tqdm_rich(std_tqdm):  # pragma: no cover
         """
         if hasattr(self, '_prog'):
             self._prog.reset(total=total)
-        super(tqdm_rich, self).reset(total=total)
+        super().reset(total=total)
 
 
 def trrange(*args, **kwargs):
-    """
-    A shortcut for `tqdm.rich.tqdm(xrange(*args), **kwargs)`.
-    On Python3+, `range` is used instead of `xrange`.
-    """
-    return tqdm_rich(_range(*args), **kwargs)
+    """Shortcut for `tqdm.rich.tqdm(range(*args), **kwargs)`."""
+    return tqdm_rich(range(*args), **kwargs)
 
 
 # Aliases

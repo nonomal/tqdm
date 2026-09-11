@@ -1,5 +1,5 @@
 """
-Asynchronous progressbar decorator for iterators.
+Asynchronous progress bar decorator for iterators.
 Includes a default `range` iterator printing to `stderr`.
 
 Usage:
@@ -18,14 +18,18 @@ __all__ = ['tqdm_asyncio', 'tarange', 'tqdm', 'trange']
 
 class tqdm_asyncio(std_tqdm):
     """
-    Asynchronous-friendly version of tqdm (Python 3.6+).
+    Asynchronous-friendly version of tqdm.
     """
     def __init__(self, iterable=None, *args, **kwargs):
-        super(tqdm_asyncio, self).__init__(iterable, *args, **kwargs)
+        super().__init__(iterable, *args, **kwargs)
         self.iterable_awaitable = False
         if iterable is not None:
             if hasattr(iterable, "__anext__"):
                 self.iterable_next = iterable.__anext__
+                self.iterable_awaitable = True
+            elif hasattr(iterable, "__aiter__"):
+                self.iterable_iterator = iterable.__aiter__()
+                self.iterable_next = self.iterable_iterator.__anext__
                 self.iterable_awaitable = True
             elif hasattr(iterable, "__next__"):
                 self.iterable_next = iterable.__next__
@@ -68,12 +72,18 @@ class tqdm_asyncio(std_tqdm):
                        total=total, **tqdm_kwargs)
 
     @classmethod
-    async def gather(cls, *fs, loop=None, timeout=None, total=None, **tqdm_kwargs):
+    async def gather(cls, *fs, loop=None, timeout=None, total=None, return_exceptions=False,
+                     **tqdm_kwargs):
         """
         Wrapper for `asyncio.gather`.
         """
         async def wrap_awaitable(i, f):
-            return i, await f
+            try:
+                return i, await f
+            except Exception as e:  # noqa: BLE001
+                if return_exceptions:
+                    return i, e
+                raise
 
         ifs = [wrap_awaitable(i, f) for i, f in enumerate(fs)]
         res = [await f for f in cls.as_completed(ifs, loop=loop, timeout=timeout,

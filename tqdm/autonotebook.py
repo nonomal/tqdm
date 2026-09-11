@@ -8,18 +8,28 @@ Usage:
 """
 import os
 import sys
+from warnings import warn
 
 try:
-    get_ipython = sys.modules['IPython'].get_ipython
-    if 'IPKernelApp' not in get_ipython().config:  # pragma: no cover
-        raise ImportError("console")
-    if 'VSCODE_PID' in os.environ:  # pragma: no cover
-        raise ImportError("vscode")
+    if 'ipykernel.zmqshell' in sys.modules:
+        if any(i == 'QT_API' or i.startswith('SPYDER') for i in os.environ):
+            raise ImportError("console")  # jupyter-qtconsole/spyder
+        ipy = sys.modules['IPython'].get_ipython().__class__.__name__.lower()
+        if 'qt' in ipy or 'spyder' in ipy:
+            raise ImportError("console")  # older jupyter-qtconsole/spyder
+        # jupyter-notebook/jupyterlab/vscode/binder/colab
+    elif 'IPython.utils._process_emscripten' in sys.modules:
+        pass  # jupyterlite (pyodide)/jupyterlite-xeus
+    else:
+        raise ImportError("console")  # ipython/jupyter-console
+    from .notebook import WARN_NOIPYW, IProgress
+    if IProgress is None:
+        from .std import TqdmWarning
+        warn(WARN_NOIPYW, TqdmWarning, stacklevel=2)
+        raise ImportError('ipywidgets')
 except Exception:
     from .std import tqdm, trange
 else:  # pragma: no cover
-    from warnings import warn
-
     from .notebook import tqdm, trange
     from .std import TqdmExperimentalWarning
     warn("Using `tqdm.autonotebook.tqdm` in notebook mode."
